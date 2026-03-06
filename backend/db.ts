@@ -1,5 +1,6 @@
 import Database from "better-sqlite3";
 import path from "path";
+import fs from "fs";
 import { fileURLToPath } from "url";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -10,23 +11,29 @@ const __dirname = path.dirname(__filename);
 const dbName = 'bible.sqlite';
 
 function getDbPath() {
-  // 1. Try relative to this file (works in local dev if file is in backend/)
-  let candidate = path.join(__dirname, '..', dbName);
-  
-  // 2. If not found, try root (works in local dev if file is in root)
-  // In local dev: __dirname is /path/to/project/backend
-  // We want /path/to/project/bible.sqlite
-  
-  // 3. Vercel specific handling
-  // On Vercel, process.cwd() is usually the root of the project
-  const cwdPath = path.join(process.cwd(), dbName);
-  
-  // Check if we are in a Vercel environment (rudimentary check)
-  if (process.env.VERCEL) {
-      return path.join(process.cwd(), dbName);
+  const candidates = [
+    // 1. Vercel / Root: process.cwd() is usually the project root
+    path.join(process.cwd(), dbName),
+    // 2. Relative to this file (backend/db.ts -> ../bible.sqlite)
+    path.resolve(__dirname, '..', dbName),
+    // 3. Relative to api/index.ts (api/index.ts -> ../bible.sqlite) if bundled differently
+    path.resolve(__dirname, '..', '..', dbName),
+    // 4. Vercel specific: sometimes files are in the root of the function
+    path.join(process.cwd(), 'api', dbName),
+    // 5. /tmp for writeable copy (if needed, though we use readonly)
+    '/tmp/bible.sqlite'
+  ];
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      console.log(`Found database at: ${candidate}`);
+      return candidate;
+    }
   }
   
-  return path.resolve(__dirname, '..', dbName);
+  // If not found, log error and return default (which will fail, but with better logs)
+  console.error(`Database file ${dbName} not found in any of the candidate paths:`, candidates);
+  return path.join(process.cwd(), dbName);
 }
 
 let dbInstance: Database.Database | null = null;
