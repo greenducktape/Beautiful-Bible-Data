@@ -121,9 +121,9 @@ export default function App() {
   const getOrdinalFromRef = (ref: string): number | null => {
     if (!books.length || !chapters.length) return null;
     
-    // Parse "Book Chapter:Verse" (e.g., "1 Kings 13:2" or "Isaiah 7:14")
-    // Regex to handle books with numbers (1 Kings) vs standard (Isaiah)
-    const match = ref.match(/^((?:\d\s)?[A-Za-z]+)\s(\d+):(\d+)$/);
+    // Parse "Book Chapter:Verse" (e.g., "1 Kings 13:2", "Isaiah 7:14", "Song of Solomon 1:1")
+    // Use a robust regex that captures everything before the last space-digit-colon-digit sequence
+    const match = ref.match(/^(.+)\s(\d+):(\d+)$/);
     if (!match) return null;
 
     const [_, bookName, chapterStr, verseStr] = match;
@@ -413,15 +413,7 @@ export default function App() {
       <main className="pt-24 pb-8 px-4 md:px-8 h-screen flex flex-col max-w-[1600px] mx-auto">
         <div className="flex-1 flex flex-col relative">
           
-          {/* Subtle Title Overlay */}
-          <div className="absolute top-0 left-0 z-10 pointer-events-none">
-            <h2 className={`font-serif text-4xl md:text-5xl opacity-10 font-bold tracking-tighter ${theme === 'light' ? 'text-slate-900' : 'text-white'}`}>
-              {connectionType === 'MESSIANIC' ? 'Prophecy' : 
-               connectionType === 'PROPHECY_ALL' ? 'Revelation' : 
-               'Connectivity'}
-            </h2>
-          </div>
-
+          
           <div className="absolute top-4 right-0 z-10 flex flex-col items-end pointer-events-none">
              <div className={`text-xs font-mono tracking-widest uppercase mb-1 ${theme === 'light' ? 'text-slate-400' : 'text-slate-600'}`}>
                 {filteredRefs.length.toLocaleString()} Arcs

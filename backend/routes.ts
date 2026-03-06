@@ -66,6 +66,12 @@ router.get("/verse-by-ordinal", (req, res) => {
       return;
   }
   
+  const ord = parseInt(ordinal as string);
+  if (isNaN(ord)) {
+      res.status(400).json({ error: "Invalid ordinal parameter" });
+      return;
+  }
+
   try {
     const db = getDb();
     const v = db.prepare(`
@@ -73,7 +79,7 @@ router.get("/verse-by-ordinal", (req, res) => {
       FROM verses v 
       JOIN books b ON v.book_id = b.id 
       WHERE v.global_ordinal = ?
-    `).get(ordinal);
+    `).get(ord);
     
     if (v) {
         res.json(v);
@@ -93,6 +99,14 @@ router.get("/verse", (req, res) => {
       return;
   }
   
+  const chap = parseInt(chapter as string);
+  const ver = parseInt(verse as string);
+
+  if (isNaN(chap) || isNaN(ver)) {
+      res.status(400).json({ error: "Invalid chapter or verse parameter" });
+      return;
+  }
+  
   try {
     const db = getDb();
     const bookRec = db.prepare("SELECT id FROM books WHERE name = ?").get(book) as any;
@@ -101,7 +115,7 @@ router.get("/verse", (req, res) => {
         return;
     }
 
-    const v = db.prepare("SELECT * FROM verses WHERE book_id = ? AND chapter = ? AND verse = ?").get(bookRec.id, chapter, verse);
+    const v = db.prepare("SELECT * FROM verses WHERE book_id = ? AND chapter = ? AND verse = ?").get(bookRec.id, chap, ver);
     
     if (v) {
         res.json(v);
@@ -116,6 +130,17 @@ router.get("/verse", (req, res) => {
 
 router.get("/chapter", (req, res) => {
   const { book, chapter } = req.query;
+  if (!book || !chapter) {
+      res.status(400).json({ error: "Missing parameters" });
+      return;
+  }
+
+  const chap = parseInt(chapter as string);
+  if (isNaN(chap)) {
+      res.status(400).json({ error: "Invalid chapter parameter" });
+      return;
+  }
+
   try {
     const db = getDb();
     const bookRec = db.prepare("SELECT id FROM books WHERE name = ?").get(book) as any;
@@ -124,7 +149,7 @@ router.get("/chapter", (req, res) => {
         return;
     }
 
-    const verses = db.prepare("SELECT * FROM verses WHERE book_id = ? AND chapter = ? ORDER BY verse ASC").all(bookRec.id, chapter);
+    const verses = db.prepare("SELECT * FROM verses WHERE book_id = ? AND chapter = ? ORDER BY verse ASC").all(bookRec.id, chap);
     res.json(verses);
   } catch (e: any) {
     console.error("Error fetching chapter:", e);
