@@ -3,7 +3,8 @@ import https from 'https';
 import AdmZip from 'adm-zip';
 import Database from 'better-sqlite3';
 
-const BIBLE_JSON_URL = 'https://raw.githubusercontent.com/thiagobodruk/bible/master/json/en_kjv.json';
+const BIBLE_JSON_URL_EN = 'https://raw.githubusercontent.com/thiagobodruk/bible/master/json/en_kjv.json';
+const BIBLE_JSON_URL_ES = 'https://raw.githubusercontent.com/thiagobodruk/bible/master/json/es_rvr.json';
 const CROSS_REF_ZIP_URL = 'https://a.openbible.info/data/cross-references.zip';
 
 const openBibleToName: Record<string, string> = {
@@ -58,13 +59,17 @@ async function seed() {
     console.log('Database bible.sqlite already exists and is valid. Skipping seed.');
     return;
   }
-  console.log('Downloading Bible JSON...');
-  const bibleBuffer = await download(BIBLE_JSON_URL);
-  let bibleString = bibleBuffer.toString('utf8');
-  if (bibleString.charCodeAt(0) === 0xFEFF) {
-    bibleString = bibleString.slice(1);
-  }
-  const bibleData = JSON.parse(bibleString);
+  console.log('Downloading Bible JSON (English)...');
+  const bibleBufferEn = await download(BIBLE_JSON_URL_EN);
+  let bibleStringEn = bibleBufferEn.toString('utf8');
+  if (bibleStringEn.charCodeAt(0) === 0xFEFF) bibleStringEn = bibleStringEn.slice(1);
+  const bibleDataEn = JSON.parse(bibleStringEn);
+
+  console.log('Downloading Bible JSON (Spanish)...');
+  const bibleBufferEs = await download(BIBLE_JSON_URL_ES);
+  let bibleStringEs = bibleBufferEs.toString('utf8');
+  if (bibleStringEs.charCodeAt(0) === 0xFEFF) bibleStringEs = bibleStringEs.slice(1);
+  const bibleDataEs = JSON.parse(bibleStringEs);
 
   console.log('Downloading Cross References...');
   const zipBuffer = await download(CROSS_REF_ZIP_URL);
@@ -94,6 +99,7 @@ async function seed() {
       chapter INTEGER,
       verse INTEGER,
       text TEXT,
+      text_es TEXT,
       global_ordinal INTEGER
     );
     
@@ -106,7 +112,7 @@ async function seed() {
   `);
 
   const insertBook = db.prepare("INSERT INTO books (name, testament, chapter_count, ordinal) VALUES (?, ?, ?, ?)");
-  const insertVerse = db.prepare("INSERT INTO verses (book_id, chapter, verse, text, global_ordinal) VALUES (?, ?, ?, ?, ?)");
+  const insertVerse = db.prepare("INSERT INTO verses (book_id, chapter, verse, text, text_es, global_ordinal) VALUES (?, ?, ?, ?, ?, ?)");
   
   // Fast inserts
   db.exec("BEGIN TRANSACTION");
@@ -115,23 +121,31 @@ async function seed() {
   let globalOrdinal = 0;
   const verseMap = new Map<string, number>(); // "Genesis.1.1" -> global_ordinal
 
-  bibleData.forEach((book: any, bookIndex: number) => {
+  bibleDataEn.forEach((bookEn: any, bookIndex: number) => {
     const testament = bookIndex < 39 ? 'OT' : 'NT';
     // Handle edge case where Psalms might be named differently in some JSONs, but thiagobodruk uses standard names
-    let bookName = book.name;
+    let bookName = bookEn.name;
     if (bookName === 'Psalm') bookName = 'Psalms'; // Normalize
     
-    insertBook.run(bookName, testament, book.chapters.length, bookIndex + 1);
+    const bookEs = bibleDataEs[bookIndex];
+    
+    insertBook.run(bookName, testament, bookEn.chapters.length, bookIndex + 1);
     const bookId = bookIndex + 1;
 
-    book.chapters.forEach((chapter: string[], chapterIndex: number) => {
+    bookEn.chapters.forEach((chapterEn: string[], chapterIndex: number) => {
       const chapterNum = chapterIndex + 1;
-      chapter.forEach((verseText: string, verseIndex: number) => {
+      const chapterEs = bookEs && bookEs.chapters[chapterIndex] ? bookEs.chapters[chapterIndex] : [];
+      
+      const maxVerses = Math.max(chapterEn.length, chapterEs.length);
+      for (let verseIndex = 0; verseIndex < maxVerses; verseIndex++) {
         const verseNum = verseIndex + 1;
-        insertVerse.run(bookId, chapterNum, verseNum, verseText, globalOrdinal);
+        const textEn = chapterEn[verseIndex] || null;
+        const textEs = chapterEs[verseIndex] || null;
+        
+        insertVerse.run(bookId, chapterNum, verseNum, textEn, textEs, globalOrdinal);
         verseMap.set(`${bookName}.${chapterNum}.${verseNum}`, globalOrdinal);
         globalOrdinal++;
-      });
+      }
     });
   });
 

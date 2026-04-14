@@ -215,7 +215,7 @@ export default function ArcDiagram({ books, chapters, references, onSelectRefere
       .style("pointer-events", "none")
       .style("opacity", d => {
         if (selectedBook && selectedBook !== 'ALL' && d.name === selectedBook) return 1; // Always show selected book label
-        return (x(d.end) - x(d.start)) > 30 ? 1 : 0;
+        return (x(d.end) - x(d.start)) > d.name.length * 6 ? 1 : 0;
       });
 
     // Draw Chapters
@@ -260,7 +260,10 @@ export default function ArcDiagram({ books, chapters, references, onSelectRefere
       .sort((a, b) => b.strength - a.strength)
       .slice(0, 5000);
       
-    const arcsGroup = zoomGroup.append("g").attr("class", "arcs");
+    const arcsGroup = zoomGroup.append("g")
+        .attr("class", "arcs")
+        .attr("transform", `translate(0, ${innerHeight - 20})`)
+        .style("--zoom-scale", "1");
 
     const maxStrength = d3.max(validRefs, d => d.strength) || 1;
     const minStrength = d3.min(validRefs, d => d.strength) || 0;
@@ -277,19 +280,16 @@ export default function ArcDiagram({ books, chapters, references, onSelectRefere
       .data(validRefs)
       .enter()
       .append("path")
+      .attr("vector-effect", "non-scaling-stroke")
       .attr("d", d => {
         const start = x(d.source);
         const end = x(d.target);
         
-        if (Math.max(start, end) < 0 || Math.min(start, end) > width) {
-            return "";
-        }
-        
         const h = Math.abs(end - start) / 2;
         const constrainedHeight = Math.min(h, innerHeight - 40); 
         
-        return `M ${start}, ${innerHeight - 20} 
-                A ${Math.abs(end - start)/2}, ${constrainedHeight} 0 0 ${start < end ? 1 : 0} ${end}, ${innerHeight - 20}`;
+        return `M ${start}, 0 
+                A ${Math.abs(end - start)/2}, ${constrainedHeight} 0 0 ${start < end ? 1 : 0} ${end}, 0`;
       })
       .style("fill", "none")
       .style("stroke", d => {
@@ -297,27 +297,26 @@ export default function ArcDiagram({ books, chapters, references, onSelectRefere
          const cat2 = getCategoryForOrdinal(Math.max(d.source, d.target));
          return cat1.id === cat2.id ? cat1.color : `url(#grad-${cat1.id}-${cat2.id})`;
       })
-      .style("stroke-width", d => widthScale(d.strength))
+      .style("stroke-width", d => `calc(${widthScale(d.strength)}px * var(--zoom-scale))`)
       .style("opacity", d => opacityScale(d.strength))
       .style("filter", d => d.strength > (maxStrength + minStrength) / 2 ? "url(#glow)" : "none")
       .on("mouseover", function(event, d) {
         d3.select(this)
             .style("stroke", highlightColor)
-            .style("stroke-width", widthScale(d.strength) * 2)
+            .style("stroke-width", `calc(${widthScale(d.strength) * 2}px * var(--zoom-scale))`)
             .style("opacity", 1)
             .style("filter", "url(#glow)")
             .raise(); // Bring to front
         setHoveredArc(d);
       })
       .on("mouseout", function(event, d) {
-        const currentTransform = d3.zoomTransform(svg.node() as Element);
         const cat1 = getCategoryForOrdinal(Math.min(d.source, d.target));
         const cat2 = getCategoryForOrdinal(Math.max(d.source, d.target));
         const strokeColor = cat1.id === cat2.id ? cat1.color : `url(#grad-${cat1.id}-${cat2.id})`;
         
         d3.select(this)
             .style("stroke", strokeColor)
-            .style("stroke-width", widthScale(d.strength) * Math.min(2, 1 + (currentTransform.k - 1) * 0.1))
+            .style("stroke-width", `calc(${widthScale(d.strength)}px * var(--zoom-scale))`)
             .style("opacity", opacityScale(d.strength))
             .style("filter", d.strength > (maxStrength + minStrength) / 2 ? "url(#glow)" : "none");
         setHoveredArc(null);
@@ -347,7 +346,7 @@ export default function ArcDiagram({ books, chapters, references, onSelectRefere
             .attr("x", (d: any) => newX(d.center))
             .style("opacity", (d: any) => {
               if (selectedBook && selectedBook !== 'ALL' && d.name === selectedBook) return 1;
-              return (newX(d.end) - newX(d.start)) > 40 ? 1 : 0;
+              return (newX(d.end) - newX(d.start)) > d.name.length * 6 ? 1 : 0;
             });
 
         // Update Chapters
@@ -361,23 +360,12 @@ export default function ArcDiagram({ books, chapters, references, onSelectRefere
             .style("opacity", (d: any) => (newX(d.end) - newX(d.start)) > 15 ? 1 : 0);
 
         // Update Arcs
-        // Culling off-screen arcs drastically improves performance
-        arcsGroup.selectAll("path")
-            .attr("d", (d: any) => {
-                const start = newX(d.source);
-                const end = newX(d.target);
-                
-                // Culling: if both ends are off-screen to the left, or both to the right
-                if (Math.max(start, end) < 0 || Math.min(start, end) > width) {
-                    return ""; // Don't draw off-screen arcs
-                }
-
-                const h = Math.abs(end - start) / 2;
-                const constrainedHeight = Math.min(h, innerHeight - 40);
-                return `M ${start}, ${innerHeight - 20} 
-                        A ${Math.abs(end - start)/2}, ${constrainedHeight} 0 0 ${start < end ? 1 : 0} ${end}, ${innerHeight - 20}`;
-            })
-            .style("stroke-width", (d: any) => widthScale(d.strength) * Math.min(2, 1 + (transform.k - 1) * 0.1)); // Make lines thicker when zoomed in
+        // Instead of recalculating the path for every arc, we just scale the group.
+        // This is O(1) and drastically improves performance.
+        const zoomScale = Math.min(2, 1 + (transform.k - 1) * 0.1);
+        arcsGroup
+            .attr("transform", `translate(${transform.x}, ${innerHeight - 20}) scale(${transform.k}, ${transform.k})`)
+            .style("--zoom-scale", zoomScale);
       });
 
     svg.call(zoom);
@@ -428,12 +416,6 @@ export default function ArcDiagram({ books, chapters, references, onSelectRefere
       
       <div className="absolute bottom-4 right-4 flex flex-col items-end gap-2 pointer-events-none">
         <span className={`text-[10px] md:text-xs ${theme === 'light' ? 'text-slate-500' : 'text-slate-600'}`}>Scroll/Pinch to Zoom • Drag to Pan</span>
-        <button 
-            onClick={handleResetZoom}
-            className={`pointer-events-auto px-4 py-2 md:px-3 md:py-1 text-xs rounded border transition-colors shadow-lg ${theme === 'light' ? 'bg-white hover:bg-slate-100 text-slate-600 border-slate-300' : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700'}`}
-        >
-            Reset View
-        </button>
       </div>
     </div>
   );

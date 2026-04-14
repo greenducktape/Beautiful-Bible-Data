@@ -250,7 +250,8 @@ export default function ArcDiagram({ books, chapters, references, onSelectRefere
       }
       
       hiddenCtx.strokeStyle = colorKey;
-      hiddenCtx.lineWidth = Math.max(10, widthScale(d.strength) * 4);
+      // Make hit area larger for easier tapping on mobile
+      hiddenCtx.lineWidth = Math.max(20, widthScale(d.strength) * 6);
       hiddenCtx.stroke();
     });
 
@@ -267,7 +268,7 @@ export default function ArcDiagram({ books, chapters, references, onSelectRefere
         .attr("x", (d: any) => newX(d.center))
         .style("opacity", (d: any) => {
             if (selectedBook && selectedBook !== 'ALL' && d.name === selectedBook) return 1;
-            return (newX(d.end) - newX(d.start)) > 30 ? 1 : 0;
+            return (newX(d.end) - newX(d.start)) > Math.max(40, d.name.length * 7) ? 1 : 0;
         });
 
     // Update Chapters
@@ -327,7 +328,7 @@ export default function ArcDiagram({ books, chapters, references, onSelectRefere
 
     // Labels
     const labelGroup = zoomGroup.append("g").attr("class", "labels")
-        .attr("transform", `translate(0, ${innerHeight + 10})`);
+        .attr("transform", `translate(0, ${innerHeight + 2})`);
 
     labelGroup.selectAll("text")
       .data(bookNodes)
@@ -344,20 +345,20 @@ export default function ArcDiagram({ books, chapters, references, onSelectRefere
 
     // Chapters
     const chapterGroup = zoomGroup.append("g").attr("class", "chapters")
-        .attr("transform", `translate(0, ${innerHeight - 20})`);
+        .attr("transform", `translate(0, ${innerHeight + 12})`);
 
     const maxVerseCount = Math.max(...chapterNodes.map((d: any) => d.verse_count), 1);
     const chapterHeightScale = d3.scaleLinear()
       .domain([0, maxVerseCount])
-      .range([0, 30]);
+      .range([0, 15]);
 
     chapterGroup.selectAll("line")
       .data(chapterNodes)
       .enter()
       .append("line")
       .attr("class", "chapter-line")
-      .attr("y1", 10)
-      .attr("y2", (d: any) => 10 + chapterHeightScale(d.verse_count))
+      .attr("y1", 0)
+      .attr("y2", (d: any) => chapterHeightScale(d.verse_count))
       .attr("stroke", textColor)
       .attr("stroke-width", 0.5)
       .style("opacity", 0.3);
@@ -367,7 +368,7 @@ export default function ArcDiagram({ books, chapters, references, onSelectRefere
       .enter()
       .append("text")
       .attr("class", "chapter-label")
-      .attr("y", 45)
+      .attr("y", 25)
       .attr("text-anchor", "middle")
       .text((d: any) => d.chapter)
       .attr("font-size", "8px")
@@ -634,13 +635,6 @@ export default function ArcDiagram({ books, chapters, references, onSelectRefere
       )}
       
       <div className="absolute bottom-4 right-4 flex flex-col items-end gap-2 pointer-events-none">
-        <span className={`text-[10px] md:text-xs ${theme === 'light' ? 'text-slate-500' : 'text-slate-600'}`}>Scroll/Pinch to Zoom • Drag to Pan</span>
-        <button 
-            onClick={handleResetZoom}
-            className={`pointer-events-auto px-4 py-2 md:px-3 md:py-1 text-xs rounded border transition-colors shadow-lg ${theme === 'light' ? 'bg-white hover:bg-slate-100 text-slate-600 border-slate-300' : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700'}`}
-        >
-            Reset View
-        </button>
       </div>
     </div>
   );

@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Playfair+Display:ital,wght@0,400;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Playfair+Display:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&family=JetBrains+Mono:wght@400&display=swap');
 @import "tailwindcss";
 
 @theme {
@@ -15,4 +15,58 @@ body {
 
 .font-serif {
   font-family: var(--font-serif);
+}
+
+/* Editorial Drop Cap */
+.drop-cap::first-letter {
+  font-family: var(--font-serif);
+  font-size: 4.5em;
+  font-weight: 600;
+  float: left;
+  line-height: 0.75;
+  margin-right: 0.12em;
+  margin-top: 0.05em;
+  margin-bottom: -0.05em;
+  color: #B8904D; /* Muted gold */
+}
+
+.dark .drop-cap::first-letter {
+  color: #C4A46A;
+}
+
+/* Smooth scrolling for the reader */
+.reader-scroll {
+  scroll-behavior: smooth;
+}
+
+/* Custom scrollbar for a cleaner look */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(150, 150, 150, 0.2);
+  border-radius: 10px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(150, 150, 150, 0.4);
+}
+
+.dark ::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+}
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+/* Hide scrollbar for swipeable areas */
+.hide-scrollbar {
+  -ms-overflow-style: none;  /* IE and Edge */
+  scrollbar-width: none;  /* Firefox */
+}
+.hide-scrollbar::-webkit-scrollbar {
+  display: none;
 }
