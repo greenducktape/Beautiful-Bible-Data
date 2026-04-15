@@ -133,7 +133,7 @@ const ReaderPanel = ({
     : '[&>option]:bg-white [&>option]:text-slate-900';
 
   return (
-    <div className={`flex-1 flex flex-col h-full overflow-hidden border-r last:border-0 ${themeClasses[readerTheme]} relative`}>
+    <div className={`flex-1 flex flex-col h-full overflow-hidden border-b md:border-b-0 md:border-r last:border-0 ${themeClasses[readerTheme]} relative`}>
       <div className={`p-3 sm:p-4 md:p-6 border-b flex justify-between items-center sticky top-0 z-20 backdrop-blur-sm flex-nowrap gap-2 sm:gap-4 ${headerClasses[readerTheme]}`}>
         <div className="flex items-center gap-1 sm:gap-2 min-w-0">
           <select 
@@ -170,7 +170,7 @@ const ReaderPanel = ({
         </div>
       )}
 
-      <div className={`flex-1 overflow-y-auto p-6 md:p-10 space-y-8 transition-opacity duration-300 ${isLoading ? 'opacity-30' : 'opacity-100'}`}>
+      <div className={`flex-1 overflow-y-auto p-4 sm:p-6 md:p-10 space-y-6 md:space-y-8 transition-opacity duration-300 ${isLoading ? 'opacity-30' : 'opacity-100'}`}>
         {verses.map((v) => {
           const ordinal = v.global_ordinal;
           const crossRefs = ordinal !== undefined ? refs.filter(r => r.source === ordinal || r.target === ordinal) : [];
@@ -180,7 +180,7 @@ const ReaderPanel = ({
             <div 
               key={v.verse} 
               id={`verse-${side}-${safeTitle}-${v.verse}`}
-              className={`relative leading-relaxed transition-all duration-500 p-5 rounded-xl ${
+              className={`relative leading-relaxed transition-all duration-500 p-3 sm:p-5 rounded-xl ${
                 v.verse === highlightVerse ? highlightClasses[readerTheme] : ''
               }`}
             >
@@ -433,9 +433,9 @@ export default function BibleReader({
         </div>
 
         {/* Content */}
-        <div className="flex-1 flex flex-row overflow-x-auto md:overflow-hidden snap-x snap-mandatory relative hide-scrollbar">
+        <div className="flex-1 flex flex-col md:flex-row overflow-hidden relative">
             {leftRef && (
-                <div className={`w-full shrink-0 snap-center h-full ${rightRef ? 'md:w-1/2' : 'md:w-full'}`}>
+                <div className={`w-full shrink-0 ${rightRef ? 'h-1/2 md:h-full md:w-1/2' : 'h-full md:w-full'}`}>
                   <ReaderPanel 
                       verses={leftVerses} 
                       highlightVerse={leftRef.verse} 
@@ -459,7 +459,7 @@ export default function BibleReader({
             )}
             
             {rightRef && (
-                <div className={`w-full shrink-0 snap-center h-full ${leftRef ? 'md:w-1/2' : 'md:w-full'}`}>
+                <div className={`w-full shrink-0 ${leftRef ? 'h-1/2 md:h-full md:w-1/2' : 'h-full md:w-full'}`}>
                   <ReaderPanel 
                       verses={rightVerses} 
                       highlightVerse={rightRef.verse} 
@@ -482,15 +482,6 @@ export default function BibleReader({
                 </div>
             )}
         </div>
-
-        {/* Mobile Swipe Indicator */}
-        {leftRef && rightRef && (
-          <div className="md:hidden absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/20 backdrop-blur-md pointer-events-none z-50">
-            <div className="w-1.5 h-1.5 rounded-full bg-white/80"></div>
-            <div className="w-1.5 h-1.5 rounded-full bg-white/40"></div>
-            <span className="text-[10px] font-medium text-white ml-1 uppercase tracking-wider">{language === 'es' ? 'Deslizar' : 'Swipe'}</span>
-          </div>
-        )}
       </div>
     </div>
   );
