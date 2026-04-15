@@ -5,7 +5,6 @@
   "type": "module",
   "scripts": {
     "dev": "npx tsx seed-db.ts && npx tsx build-static.ts && vite",
-    "start": "vite preview",
     "build": "npx tsx seed-db.ts && npx tsx build-static.ts && vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist",

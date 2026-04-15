@@ -47,6 +47,7 @@ export default function ArcDiagram({ books, chapters, references, onSelectRefere
   // We use a ref to store the current transform to avoid re-renders
   const transformRef = useRef(d3.zoomIdentity);
   const isZooming = useRef(false);
+  const frameRef = useRef<number | null>(null);
   
   const [hoveredArc, setHoveredArc] = useState<CrossReference | null>(null);
   const hoveredArcRef = useRef<CrossReference | null>(null);
@@ -99,12 +100,47 @@ export default function ArcDiagram({ books, chapters, references, onSelectRefere
     if (!books.length) return { validRefs: [], totalUnits: 0, bookNodes: [], chapterNodes: [], maxStrength: 1, minStrength: 0 };
 
     const totalUnits = books.reduce((acc, b) => acc + b.verse_count, 0);
+
+    // Pre-calculate colors for fast lookup
+    const ordinalColors = new Array(totalUnits);
+    books.forEach(b => {
+      const cat = CATEGORIES.find(c => b.id >= c.start && b.id <= c.end) || CATEGORIES[0];
+      for(let i = 0; i < b.verse_count; i++) {
+        ordinalColors[b.start_ordinal + i] = cat.color;
+      }
+    });
     
     // Limit to top 5000 strongest references
-    const validRefs = references
+    let rawRefs = references
       .filter(r => r.source < totalUnits && r.target < totalUnits)
       .sort((a, b) => b.strength - a.strength)
-      .slice(0, 5000);
+      .slice(0, 5000)
+      .map(r => ({
+        ...r,
+        color1: ordinalColors[Math.min(r.source, r.target)] || CATEGORIES[0].color,
+        color2: ordinalColors[Math.max(r.source, r.target)] || CATEGORIES[0].color
+      }));
+
+    const maxStrength = d3.max(rawRefs, d => d.strength) || 1;
+    const minStrength = d3.min(rawRefs, d => d.strength) || 0;
+
+    const validRefs = rawRefs.map(r => {
+      const normalizedStrength = (r.strength - minStrength) / (maxStrength - minStrength || 1);
+      const strengthBucket = Math.round(normalizedStrength * 4); 
+      const baseWidth = 0.2 + normalizedStrength * 1.3;
+      const alpha = 0.15 + normalizedStrength * 0.65;
+      const minOrdinal = Math.min(r.source, r.target);
+      const maxOrdinal = Math.max(r.source, r.target);
+      return {
+        ...r,
+        minOrdinal,
+        maxOrdinal,
+        normalizedStrength,
+        baseWidth,
+        alpha,
+        renderKey: `${r.color1}_${strengthBucket}`
+      };
+    }).sort((a, b) => a.renderKey.localeCompare(b.renderKey));
 
     const bookNodes = books.map(book => ({
       ...book,
@@ -120,11 +156,8 @@ export default function ArcDiagram({ books, chapters, references, onSelectRefere
       center: c.start_ordinal + c.verse_count / 2
     }));
 
-    const maxStrength = d3.max(validRefs, d => d.strength) || 1;
-    const minStrength = d3.min(validRefs, d => d.strength) || 0;
-
     return { validRefs, totalUnits, bookNodes, chapterNodes, maxStrength, minStrength };
-  }, [books, chapters, references]);
+  }, [books, chapters, references, CATEGORIES]);
 
   // Helper to get category color
   const getCategoryForBook = useCallback((bookId: number) => {
@@ -155,133 +188,198 @@ export default function ArcDiagram({ books, chapters, references, onSelectRefere
     
     if (!ctx || !hiddenCtx) return;
 
+    // Fast math instead of d3 scales
+    const k = transform.k;
+    const tx = transform.x;
+    const scaleFactor = totalUnits > 0 ? innerWidth / totalUnits : 0;
+    
+    // Pre-calculate common values
+    const scaledFactor = scaleFactor * k;
+    const getX = (val: number) => val * scaledFactor + tx;
+
     // --- CANVAS DRAWING (Arcs) ---
     const dpr = window.devicePixelRatio || 1;
-    // Reset transform to identity before clearing to ensure full clear
+    
+    // Reset transform to identity before clearing
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     
-    hiddenCtx.setTransform(1, 0, 0, 1, 0, 0);
-    hiddenCtx.fillStyle = '#000000';
-    hiddenCtx.fillRect(0, 0, hiddenCanvas.width, hiddenCanvas.height);
-
     // Apply scaling for DPR and then the zoom transform
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.translate(margin.left, margin.top);
-    // hiddenCtx doesn't use DPR scaling as it's 1:1 with CSS pixels
-    hiddenCtx.translate(margin.left, margin.top);
 
-    // Scales
-    const x = d3.scaleLinear()
-      .domain([0, totalUnits])
-      .range([0, innerWidth]);
-
-    const newX = transform.rescaleX(x);
-
-    const opacityScale = d3.scaleLinear()
-      .domain([minStrength, maxStrength])
-      .range([0.15, 0.8]);
-      
-    const widthScale = d3.scaleLinear()
-      .domain([minStrength, maxStrength])
-      .range([0.2, 1.5]);
+    // Only update hidden canvas when NOT zooming
+    if (!isZooming.current) {
+      hiddenCtx.setTransform(1, 0, 0, 1, 0, 0);
+      hiddenCtx.fillStyle = '#000000';
+      hiddenCtx.fillRect(0, 0, hiddenCanvas.width, hiddenCanvas.height);
+      hiddenCtx.translate(margin.left, margin.top);
+    }
 
     ctx.lineCap = 'round';
+    
+    // Pre-calculate line widths based on strength
+    const zoomMultiplier = Math.min(2, 1 + (k - 1) * 0.1);
+    const y = innerHeight - 20;
 
-    validRefs.forEach((d, i) => {
-      const start = newX(d.source);
-      const end = newX(d.target);
+    let currentKey = '';
+
+    for (let i = 0; i < validRefs.length; i++) {
+      const d = validRefs[i];
+      const startX = getX(d.minOrdinal);
+      const endX = getX(d.maxOrdinal);
+      
+      // Strict culling
+      if (endX < -100 || startX > width + 100) continue;
+      
+      const widthX = endX - startX;
+      if (widthX < 0.5) continue;
+
+      if (d.renderKey !== currentKey) {
+        if (currentKey !== '') {
+          ctx.stroke();
+        }
+        ctx.beginPath();
+        ctx.strokeStyle = d.color1;
+        ctx.lineWidth = d.baseWidth * zoomMultiplier;
+        ctx.globalAlpha = d.alpha;
+        currentKey = d.renderKey;
+      }
+
+      const radiusX = widthX / 2;
+      const radiusY = Math.min(radiusX, innerHeight - 40);
+      const centerX = startX + radiusX;
+
+      if (radiusX > 0 && radiusY > 0) {
+        ctx.moveTo(startX, y);
+        ctx.ellipse(centerX, y, radiusX, radiusY, 0, Math.PI, 0, false);
+      } else {
+        ctx.moveTo(startX, y);
+        ctx.lineTo(endX, y);
+      }
+    }
+
+    if (currentKey !== '') {
+      ctx.stroke();
+    }
+
+    ctx.globalAlpha = 1;
+
+    // Draw hidden arcs only when not zooming
+    if (!isZooming.current) {
+      hiddenCtx.lineCap = 'round';
+      for (let i = 0; i < validRefs.length; i++) {
+        const d = validRefs[i];
+        const startX = getX(d.minOrdinal);
+        const endX = getX(d.maxOrdinal);
+        
+        if (endX < -100 || startX > width + 100) continue;
+        
+        const widthX = endX - startX;
+        if (widthX < 0.5) continue;
+
+        const radiusX = widthX / 2;
+        const radiusY = Math.min(radiusX, innerHeight - 40);
+        const centerX = startX + radiusX;
+
+        const id = i + 1;
+        const r = (id & 0xff0000) >> 16;
+        const g = (id & 0x00ff00) >> 8;
+        const b = (id & 0x0000ff);
+        
+        hiddenCtx.beginPath();
+        if (radiusX > 0 && radiusY > 0) {
+          hiddenCtx.moveTo(startX, y);
+          hiddenCtx.ellipse(centerX, y, radiusX, radiusY, 0, Math.PI, 0, false);
+        } else {
+          hiddenCtx.moveTo(startX, y);
+          hiddenCtx.lineTo(endX, y);
+        }
+        
+        hiddenCtx.strokeStyle = `rgb(${r},${g},${b})`;
+        hiddenCtx.lineWidth = Math.max(20, d.baseWidth * zoomMultiplier * 6);
+        hiddenCtx.stroke();
+      }
+    }
+
+    // --- CANVAS DRAWING (Books & Chapters) ---
+    const isLight = theme === 'light';
+    const bgColor = isLight ? "#f8fafc" : "#0f172a";
+    const textColor = isLight ? "#475569" : "#64748b";
+    const highlightColor = isLight ? "#000000" : "#ffffff";
+
+    const maxVerseCount = Math.max(...chapterNodes.map((d: any) => d.verse_count), 1);
+    const chapterHeightScale = d3.scaleLinear()
+      .domain([0, maxVerseCount])
+      .range([0, 15]);
+
+    // Draw Chapters
+    ctx.lineWidth = 0.5;
+    ctx.strokeStyle = textColor;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    
+    // Batch chapter lines
+    ctx.globalAlpha = 0.3;
+    ctx.beginPath();
+    chapterNodes.forEach((d: any) => {
+      const startX = getX(d.start);
+      const endX = getX(d.end);
+      const width = endX - startX;
       
       // Culling
-      if (Math.max(start, end) < -100 || Math.min(start, end) > width + 100) return;
+      if (endX < 0 || startX > innerWidth) return;
 
-      const h = Math.abs(end - start) / 2;
-      const constrainedHeight = Math.min(h, innerHeight - 40);
-      const y = innerHeight - 20;
-      const centerX = (start + end) / 2;
-      const radiusX = Math.abs(end - start) / 2;
-      const radiusY = constrainedHeight;
-
-      // Draw visible arc
-      ctx.beginPath();
-      try {
-        ctx.ellipse(centerX, y, radiusX, radiusY, 0, Math.PI, 0, false);
-      } catch (e) {
-        ctx.moveTo(start, y);
-        ctx.quadraticCurveTo(centerX, y - radiusY * 2, end, y);
+      if (width > 2) {
+        ctx.moveTo(startX, innerHeight - 8);
+        ctx.lineTo(startX, innerHeight - 8 + chapterHeightScale(d.verse_count));
       }
+    });
+    ctx.stroke();
 
-      const cat1 = getCategoryForOrdinal(Math.min(d.source, d.target));
-      const cat2 = getCategoryForOrdinal(Math.max(d.source, d.target));
+    // Draw chapter texts
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = textColor;
+    ctx.font = '8px sans-serif';
+    chapterNodes.forEach((d: any) => {
+      const startX = getX(d.start);
+      const endX = getX(d.end);
+      const width = endX - startX;
       
-      if (cat1.id === cat2.id) {
-        ctx.strokeStyle = cat1.color;
-      } else {
-        const grad = ctx.createLinearGradient(start, 0, end, 0);
-        grad.addColorStop(0, cat1.color);
-        grad.addColorStop(1, cat2.color);
-        ctx.strokeStyle = grad;
+      if (endX < 0 || startX > innerWidth) return;
+
+      if (width > 20) {
+        ctx.fillText(d.chapter.toString(), getX(d.center), innerHeight + 5);
       }
-
-      ctx.lineWidth = widthScale(d.strength) * Math.min(2, 1 + (transform.k - 1) * 0.1);
-      ctx.globalAlpha = opacityScale(d.strength);
-      ctx.shadowBlur = 0;
-
-      ctx.stroke();
-      ctx.globalAlpha = 1;
-
-      // Draw hidden arc
-      // Skip if zooming for performance
-      if (isZooming.current) return;
-
-      // Color encoding: index + 1
-      const id = i + 1;
-      const r = (id & 0xff0000) >> 16;
-      const g = (id & 0x00ff00) >> 8;
-      const b = (id & 0x0000ff);
-      const colorKey = `rgb(${r},${g},${b})`;
-      
-      hiddenCtx.beginPath();
-      try {
-        hiddenCtx.ellipse(centerX, y, radiusX, radiusY, 0, Math.PI, 0, false);
-      } catch (e) {
-        hiddenCtx.moveTo(start, y);
-        hiddenCtx.quadraticCurveTo(centerX, y - radiusY * 2, end, y);
-      }
-      
-      hiddenCtx.strokeStyle = colorKey;
-      // Make hit area larger for easier tapping on mobile
-      hiddenCtx.lineWidth = Math.max(20, widthScale(d.strength) * 6);
-      hiddenCtx.stroke();
     });
 
-    // --- SVG UPDATES (Books/Chapters) ---
-    const d3Svg = d3.select(svg);
+    // Draw Books
+    ctx.globalAlpha = 1;
+    ctx.lineWidth = 0.5;
+    ctx.strokeStyle = bgColor;
     
-    // Update Books
-    d3Svg.selectAll(".book-rect")
-        .attr("x", (d: any) => newX(d.start))
-        .attr("width", (d: any) => Math.max(1, newX(d.end) - newX(d.start)));
+    bookNodes.forEach((d: any) => {
+      const startX = getX(d.start);
+      const endX = getX(d.end);
+      const width = Math.max(1, endX - startX);
+      
+      // Culling
+      if (endX < 0 || startX > innerWidth) return;
 
-    // Update Book Labels
-    d3Svg.selectAll(".book-label")
-        .attr("x", (d: any) => newX(d.center))
-        .style("opacity", (d: any) => {
-            if (selectedBook && selectedBook !== 'ALL' && d.name === selectedBook) return 1;
-            return (newX(d.end) - newX(d.start)) > Math.max(40, d.name.length * 7) ? 1 : 0;
-        });
+      const isSelected = selectedBook && selectedBook !== 'ALL' && d.name === selectedBook;
+      ctx.fillStyle = isSelected ? highlightColor : getCategoryForBook(d.id).color;
+      
+      ctx.fillRect(startX, innerHeight - 20, width, 10);
+      ctx.strokeRect(startX, innerHeight - 20, width, 10);
 
-    // Update Chapters
-    d3Svg.selectAll(".chapter-line")
-        .attr("x1", (d: any) => newX(d.start))
-        .attr("x2", (d: any) => newX(d.start))
-        .style("opacity", (d: any) => (newX(d.end) - newX(d.start)) > 2 ? 0.3 : 0);
+      if (isSelected || width > Math.max(40, d.name.length * 7)) {
+        ctx.fillStyle = isSelected ? highlightColor : getCategoryForBook(d.id).color;
+        ctx.font = isSelected ? 'bold 10px sans-serif' : '10px sans-serif';
+        ctx.fillText(d.name, getX(d.center), innerHeight - 8);
+      }
+    });
 
-    d3Svg.selectAll(".chapter-label")
-        .attr("x", (d: any) => newX(d.center))
-        .style("opacity", (d: any) => (newX(d.end) - newX(d.start)) > 20 ? 1 : 0);
-
-  }, [dimensions, totalUnits, validRefs, maxStrength, minStrength, theme, selectedBook, getCategoryForOrdinal]);
+  }, [dimensions, totalUnits, validRefs, maxStrength, minStrength, theme, selectedBook, bookNodes, chapterNodes, getCategoryForBook]);
 
 
   // Initialize SVG Elements (One-time setup per dimension change)
@@ -299,81 +397,11 @@ export default function ArcDiagram({ books, chapters, references, onSelectRefere
     const zoomGroup = svg.append("g")
         .attr("transform", `translate(${margin.left},${margin.top})`);
 
-    const x = d3.scaleLinear()
-      .domain([0, totalUnits])
-      .range([0, innerWidth]);
-
-    // Draw Books
-    const isLight = theme === 'light';
-    const bgColor = isLight ? "#f8fafc" : "#0f172a";
-    const textColor = isLight ? "#475569" : "#64748b";
-    const highlightColor = isLight ? "#000000" : "#ffffff";
-
-    const bookGroup = zoomGroup.append("g").attr("class", "books")
-        .attr("transform", `translate(0, ${innerHeight - 20})`);
-
-    bookGroup.selectAll("rect")
-      .data(bookNodes)
-      .enter()
-      .append("rect")
-      .attr("class", "book-rect")
-      .attr("y", 0)
-      .attr("height", 10)
-      .attr("fill", (d: any) => {
-        if (selectedBook && selectedBook !== 'ALL' && d.name === selectedBook) return highlightColor;
-        return getCategoryForBook(d.id).color;
-      })
-      .attr("stroke", bgColor)
-      .attr("stroke-width", 0.5);
-
-    // Labels
-    const labelGroup = zoomGroup.append("g").attr("class", "labels")
-        .attr("transform", `translate(0, ${innerHeight + 2})`);
-
-    labelGroup.selectAll("text")
-      .data(bookNodes)
-      .enter()
-      .append("text")
-      .attr("class", "book-label")
-      .attr("y", 0)
-      .attr("text-anchor", "middle")
-      .text((d: any) => d.name)
-      .attr("font-size", "10px")
-      .attr("fill", (d: any) => (selectedBook && selectedBook !== 'ALL' && d.name === selectedBook) ? highlightColor : getCategoryForBook(d.id).color)
-      .attr("font-weight", (d: any) => (selectedBook && selectedBook !== 'ALL' && d.name === selectedBook) ? "bold" : "normal")
-      .style("pointer-events", "none");
-
-    // Chapters
-    const chapterGroup = zoomGroup.append("g").attr("class", "chapters")
-        .attr("transform", `translate(0, ${innerHeight + 12})`);
-
-    const maxVerseCount = Math.max(...chapterNodes.map((d: any) => d.verse_count), 1);
-    const chapterHeightScale = d3.scaleLinear()
-      .domain([0, maxVerseCount])
-      .range([0, 15]);
-
-    chapterGroup.selectAll("line")
-      .data(chapterNodes)
-      .enter()
-      .append("line")
-      .attr("class", "chapter-line")
-      .attr("y1", 0)
-      .attr("y2", (d: any) => chapterHeightScale(d.verse_count))
-      .attr("stroke", textColor)
-      .attr("stroke-width", 0.5)
-      .style("opacity", 0.3);
-
-    chapterGroup.selectAll("text")
-      .data(chapterNodes)
-      .enter()
-      .append("text")
-      .attr("class", "chapter-label")
-      .attr("y", 25)
-      .attr("text-anchor", "middle")
-      .text((d: any) => d.chapter)
-      .attr("font-size", "8px")
-      .attr("fill", textColor)
-      .style("pointer-events", "none");
+    // Add a transparent rect to catch zoom events
+    zoomGroup.append("rect")
+        .attr("width", innerWidth)
+        .attr("height", innerHeight)
+        .attr("fill", "transparent");
 
     // Initial Draw
     draw(transformRef.current);
@@ -388,13 +416,29 @@ export default function ArcDiagram({ books, chapters, references, onSelectRefere
       })
       .on("zoom", (event) => {
         transformRef.current = event.transform;
-        draw(event.transform);
-        drawHover(event.transform);
+        
+        if (frameRef.current !== null) {
+          cancelAnimationFrame(frameRef.current);
+        }
+        
+        frameRef.current = requestAnimationFrame(() => {
+          draw(transformRef.current);
+          drawHover(transformRef.current);
+          frameRef.current = null;
+        });
       })
       .on("end", () => {
         isZooming.current = false;
-        draw(transformRef.current);
-        drawHover(transformRef.current);
+        
+        if (frameRef.current !== null) {
+          cancelAnimationFrame(frameRef.current);
+        }
+        
+        frameRef.current = requestAnimationFrame(() => {
+          draw(transformRef.current);
+          drawHover(transformRef.current);
+          frameRef.current = null;
+        });
       });
 
     svg.call(zoom);
@@ -425,46 +469,43 @@ export default function ArcDiagram({ books, chapters, references, onSelectRefere
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.translate(margin.left, margin.top);
 
-    const x = d3.scaleLinear()
-      .domain([0, totalUnits])
-      .range([0, innerWidth]);
-    const newX = transform.rescaleX(x);
+    const k = transform.k;
+    const tx = transform.x;
+    const scaleFactor = totalUnits > 0 ? innerWidth / totalUnits : 0;
+    const getX = (val: number) => val * scaleFactor * k + tx;
 
     const widthScale = d3.scaleLinear()
       .domain([minStrength, maxStrength])
       .range([0.2, 1.5]);
 
-    const start = newX(d.source);
-    const end = newX(d.target);
+    const startX = getX((d as any).minOrdinal);
+    const endX = getX((d as any).maxOrdinal);
     
     // Culling
-    if (Math.max(start, end) < -100 || Math.min(start, end) > width + 100) return;
+    if (endX < -100 || startX > width + 100) return;
 
-    const h = Math.abs(end - start) / 2;
-    const constrainedHeight = Math.min(h, innerHeight - 40);
+    const widthX = endX - startX;
+    const radiusX = widthX / 2;
+    const radiusY = Math.min(radiusX, innerHeight - 40);
+    const centerX = startX + radiusX;
     const y = innerHeight - 20;
-    const centerX = (start + end) / 2;
-    const radiusX = Math.abs(end - start) / 2;
-    const radiusY = constrainedHeight;
 
     ctx.lineCap = 'round';
     ctx.beginPath();
-    try {
+    if (radiusX > 0 && radiusY > 0) {
+      ctx.moveTo(startX, y);
       ctx.ellipse(centerX, y, radiusX, radiusY, 0, Math.PI, 0, false);
-    } catch (e) {
-      ctx.moveTo(start, y);
-      ctx.quadraticCurveTo(centerX, y - radiusY * 2, end, y);
+    } else {
+      ctx.moveTo(startX, y);
+      ctx.lineTo(endX, y);
     }
 
-    const cat1 = getCategoryForOrdinal(Math.min(d.source, d.target));
-    const cat2 = getCategoryForOrdinal(Math.max(d.source, d.target));
-    
-    if (cat1.id === cat2.id) {
-      ctx.strokeStyle = cat1.color;
+    if ((d as any).color1 === (d as any).color2) {
+      ctx.strokeStyle = (d as any).color1;
     } else {
-      const grad = ctx.createLinearGradient(start, 0, end, 0);
-      grad.addColorStop(0, cat1.color);
-      grad.addColorStop(1, cat2.color);
+      const grad = ctx.createLinearGradient(startX, 0, endX, 0);
+      grad.addColorStop(0, (d as any).color1);
+      grad.addColorStop(1, (d as any).color2);
       ctx.strokeStyle = grad;
     }
 
@@ -510,6 +551,8 @@ export default function ArcDiagram({ books, chapters, references, onSelectRefere
   const lastMoveTime = useRef(0);
   
   const handleMouseMove = (e: React.MouseEvent) => {
+    if (isZooming.current) return; // Skip expensive hit detection while panning/zooming
+    
     const now = performance.now();
     if (now - lastMoveTime.current < 16) return; // ~60fps throttle
     lastMoveTime.current = now;
