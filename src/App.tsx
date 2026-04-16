@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import Layout from './components/Layout';
 import BibleBoard from './pages/BibleBoard';
 import CrossReferences from './pages/CrossReferences';
+import About from './pages/About';
 
 export default function App() {
   return (
@@ -13,6 +14,7 @@ export default function App() {
           <Route path="bible-board" element={<BibleBoard />} />
           <Route path="Bible board" element={<Navigate to="/bible-board" replace />} />
           <Route path="crossreferences" element={<CrossReferences />} />
+          <Route path="about" element={<About />} />
         </Route>
       </Routes>
     </BrowserRouter>

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Outlet, Link, useLocation } from 'react-router-dom';
-import { BookOpen, Crosshair, Book, Menu, ChevronLeft } from 'lucide-react';
+import { BookOpen, Crosshair, Book, Menu, ChevronLeft, Info } from 'lucide-react';
 
 export default function Layout() {
   const location = useLocation();
@@ -91,6 +91,18 @@ export default function Layout() {
           >
             <BookOpen size={20} />
             Bible Board
+          </Link>
+          <Link
+            to="/about"
+            onClick={() => isMobile && setIsSidebarOpen(false)}
+            className={`flex items-center gap-3 px-4 py-3 rounded-xl transition-colors ${
+              location.pathname.includes('about')
+                ? 'bg-emerald-50 text-emerald-900 font-medium'
+                : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
+            }`}
+          >
+            <Info size={20} />
+            About
           </Link>
         </nav>
       </div>
